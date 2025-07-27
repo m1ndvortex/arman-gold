@@ -18,7 +18,8 @@
     "db:test": "npx ts-node src/database/test-connection.ts",
     "db:clear": "npx ts-node src/database/seeds.ts clear",
     "db:reset": "npx prisma migrate reset --force",
-    "db:studio": "npx prisma studio"
+    "db:studio": "npx prisma studio",
+    "redis:test": "npx ts-node src/scripts/test-redis.ts"
   },
   "dependencies": {
     "express": "^4.18.2",

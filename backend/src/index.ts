@@ -4,6 +4,9 @@ import helmet from 'helmet';
 import dotenv from 'dotenv';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
+import redisManager from './config/redis';
+import { logger } from './utils/logger';
+import { apiRateLimiter } from './middleware/rateLimiter';
 
 // Load environment variables
 dotenv.config();
@@ -28,14 +31,32 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
+// Apply rate limiting to all API routes
+app.use('/api', apiRateLimiter);
+
 // Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'OK',
-    timestamp: new Date().toISOString(),
-    service: 'jeweler-backend',
-    version: '1.0.0'
-  });
+app.get('/health', async (req, res) => {
+  try {
+    const redisHealth = await redisManager.healthCheck();
+    
+    res.json({
+      status: 'OK',
+      timestamp: new Date().toISOString(),
+      service: 'jeweler-backend',
+      version: '1.0.0',
+      dependencies: {
+        redis: redisHealth
+      }
+    });
+  } catch (error) {
+    res.status(503).json({
+      status: 'Service Unavailable',
+      timestamp: new Date().toISOString(),
+      service: 'jeweler-backend',
+      version: '1.0.0',
+      error: 'Health check failed'
+    });
+  }
 });
 
 // API routes placeholder
@@ -72,10 +93,62 @@ app.use('*', (req, res) => {
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📊 Health check: http://localhost:${PORT}/health`);
-  console.log(`🔌 WebSocket server ready`);
+// Initialize Redis connection and start server
+async function startServer() {
+  try {
+    // Connect to Redis
+    await redisManager.connect();
+    logger.info('Redis connected successfully');
+
+    // Start the server
+    server.listen(PORT, () => {
+      logger.info(`🚀 Server running on port ${PORT}`);
+      logger.info(`📊 Health check: http://localhost:${PORT}/health`);
+      logger.info(`🔌 WebSocket server ready`);
+      logger.info(`🔄 Redis caching and session management active`);
+    });
+  } catch (error) {
+    logger.error('Failed to start server:', error);
+    process.exit(1);
+  }
+}
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  logger.info('SIGTERM received, shutting down gracefully');
+  
+  try {
+    await redisManager.disconnect();
+    logger.info('Redis disconnected');
+    
+    server.close(() => {
+      logger.info('Server closed');
+      process.exit(0);
+    });
+  } catch (error) {
+    logger.error('Error during shutdown:', error);
+    process.exit(1);
+  }
 });
+
+process.on('SIGINT', async () => {
+  logger.info('SIGINT received, shutting down gracefully');
+  
+  try {
+    await redisManager.disconnect();
+    logger.info('Redis disconnected');
+    
+    server.close(() => {
+      logger.info('Server closed');
+      process.exit(0);
+    });
+  } catch (error) {
+    logger.error('Error during shutdown:', error);
+    process.exit(1);
+  }
+});
+
+// Start the server
+startServer();
 
 export default app;
