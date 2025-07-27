@@ -10,7 +10,15 @@
     "test": "jest --passWithNoTests",
     "test:watch": "jest --watch --passWithNoTests",
     "lint": "eslint src --ext .ts",
-    "lint:fix": "eslint src --ext .ts --fix"
+    "lint:fix": "eslint src --ext .ts --fix",
+    "db": "node scripts/db-setup.js",
+    "db:migrate": "npx prisma migrate dev",
+    "db:generate": "npx prisma generate",
+    "db:seed": "npx ts-node src/database/seeds.ts",
+    "db:test": "npx ts-node src/database/test-connection.ts",
+    "db:clear": "npx ts-node src/database/seeds.ts clear",
+    "db:reset": "npx prisma migrate reset --force",
+    "db:studio": "npx prisma studio"
   },
   "dependencies": {
     "express": "^4.18.2",

@@ -7,6 +7,9 @@ CREATE DATABASE IF NOT EXISTS jeweler_platform_test;
 -- Grant permissions
 GRANT ALL PRIVILEGES ON jeweler_platform.* TO 'jeweler_user'@'%';
 GRANT ALL PRIVILEGES ON jeweler_platform_test.* TO 'jeweler_user'@'%';
+-- Grant permission to create databases (needed for Prisma shadow database)
+GRANT CREATE ON *.* TO 'jeweler_user'@'%';
+GRANT DROP ON *.* TO 'jeweler_user'@'%';
 
 -- Create platform-level tables (shared across tenants)
 USE jeweler_platform;

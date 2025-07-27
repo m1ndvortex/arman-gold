@@ -1,0 +1,441 @@
+// Prisma schema for Jeweler SaaS Platform
+// Multi-tenant architecture with MySQL database
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// PLATFORM-LEVEL TABLES (Shared across all tenants)
+// ============================================================================
+
+model Tenant {
+  id           String   @id @default(cuid())
+  name         String
+  subdomain    String   @unique
+  databaseName String   @map("database_name")
+  status       TenantStatus @default(TRIAL)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  
+  // Relations
+  users        TenantUser[]
+  
+  @@map("tenants")
+}
+
+model TenantUser {
+  id                String   @id @default(cuid())
+  tenantId          String   @map("tenant_id")
+  email             String
+  passwordHash      String   @map("password_hash")
+  role              UserRole
+  twoFactorEnabled  Boolean  @default(false) @map("two_factor_enabled")
+  twoFactorSecret   String?  @map("two_factor_secret")
+  isActive          Boolean  @default(true) @map("is_active")
+  lastLoginAt       DateTime? @map("last_login_at")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+  
+  // Relations
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  sessions          UserSession[]
+  
+  @@unique([tenantId, email])
+  @@map("tenant_users")
+}
+
+model UserSession {
+  id           String   @id @default(cuid())
+  userId       String   @map("user_id")
+  sessionToken String   @unique @map("session_token")
+  deviceInfo   String?  @map("device_info")
+  ipAddress    String?  @map("ip_address")
+  expiresAt    DateTime @map("expires_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+  
+  // Relations
+  user         TenantUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("user_sessions")
+}
+
+// ============================================================================
+// TENANT-SPECIFIC TABLES (Per tenant database)
+// ============================================================================
+
+model Customer {
+  id              String   @id @default(cuid())
+  name            String
+  phone           String?
+  email           String?
+  address         String?  @db.Text
+  taxId           String?  @map("tax_id")
+  creditLimit     Decimal  @default(0) @map("credit_limit") @db.Decimal(15, 2)
+  currentBalance  Decimal  @default(0) @map("current_balance") @db.Decimal(15, 2)
+  customerGroup   String?  @map("customer_group")
+  tags            String?  @db.Text // JSON array of tags
+  birthDate       DateTime? @map("birth_date") @db.Date
+  anniversaryDate DateTime? @map("anniversary_date") @db.Date
+  communicationPrefs String? @map("communication_prefs") @db.Text // JSON
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  
+  // Relations
+  invoices        Invoice[]
+  ledgerEntries   CustomerLedger[]
+  
+  @@map("customers")
+}
+
+model CustomerLedger {
+  id            String      @id @default(cuid())
+  customerId    String      @map("customer_id")
+  type          LedgerType
+  amount        Decimal     @db.Decimal(15, 2)
+  currency      String      @default("IRR")
+  description   String
+  referenceType String?     @map("reference_type")
+  referenceId   String?     @map("reference_id")
+  balance       Decimal     @db.Decimal(15, 2)
+  entryDate     DateTime    @default(now()) @map("entry_date")
+  createdAt     DateTime    @default(now()) @map("created_at")
+  
+  // Relations
+  customer      Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  
+  @@map("customer_ledger")
+}
+
+model Product {
+  id              String         @id @default(cuid())
+  name            String
+  category        ProductCategory
+  barcode         String?        @unique
+  weight          Decimal?       @db.Decimal(10, 4)
+  purity          Decimal?       @db.Decimal(5, 2)
+  currentStock    Int            @default(0) @map("current_stock")
+  minimumStock    Int            @default(0) @map("minimum_stock")
+  unitPrice       Decimal        @map("unit_price") @db.Decimal(15, 2)
+  supplier        String?
+  location        String?
+  description     String?        @db.Text
+  isActive        Boolean        @default(true) @map("is_active")
+  lastStockMovement DateTime?    @map("last_stock_movement")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+  
+  // Relations
+  invoiceItems    InvoiceItem[]
+  stockMovements  StockMovement[]
+  bomComponents   BOMComponent[] @relation("ProductComponents")
+  bomParents      BOMComponent[] @relation("ParentProduct")
+  
+  @@map("products")
+}
+
+model BOMComponent {
+  id                String  @id @default(cuid())
+  parentProductId   String  @map("parent_product_id")
+  componentId       String  @map("component_id")
+  quantity          Decimal @db.Decimal(10, 4)
+  wastagePercentage Decimal @default(0) @map("wastage_percentage") @db.Decimal(5, 2)
+  createdAt         DateTime @default(now()) @map("created_at")
+  
+  // Relations
+  parentProduct     Product @relation("ParentProduct", fields: [parentProductId], references: [id], onDelete: Cascade)
+  component         Product @relation("ProductComponents", fields: [componentId], references: [id], onDelete: Cascade)
+  
+  @@unique([parentProductId, componentId])
+  @@map("bom_components")
+}
+
+model StockMovement {
+  id          String           @id @default(cuid())
+  productId   String           @map("product_id")
+  type        StockMovementType
+  quantity    Int
+  reason      String
+  referenceType String?        @map("reference_type")
+  referenceId String?          @map("reference_id")
+  notes       String?          @db.Text
+  createdBy   String           @map("created_by")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  
+  // Relations
+  product     Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
+  
+  @@map("stock_movements")
+}
+
+model Invoice {
+  id              String        @id @default(cuid())
+  invoiceNumber   String        @unique @map("invoice_number")
+  customerId      String?       @map("customer_id")
+  type            InvoiceType
+  subtotal        Decimal       @db.Decimal(15, 2)
+  taxAmount       Decimal       @default(0) @map("tax_amount") @db.Decimal(15, 2)
+  totalAmount     Decimal       @map("total_amount") @db.Decimal(15, 2)
+  goldPrice       Decimal?      @map("gold_price") @db.Decimal(15, 2)
+  manufacturingFee Decimal?     @map("manufacturing_fee") @db.Decimal(15, 2)
+  profitMargin    Decimal?      @map("profit_margin") @db.Decimal(5, 2)
+  status          InvoiceStatus @default(DRAFT)
+  notes           String?       @db.Text
+  attachments     String?       @db.Text // JSON array of file paths
+  isRecurring     Boolean       @default(false) @map("is_recurring")
+  recurringSchedule String?     @map("recurring_schedule") @db.Text // JSON
+  dueDate         DateTime?     @map("due_date") @db.Date
+  paidAt          DateTime?     @map("paid_at")
+  createdBy       String        @map("created_by")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+  
+  // Relations
+  customer        Customer?     @relation(fields: [customerId], references: [id])
+  items           InvoiceItem[]
+  payments        Payment[]
+  
+  @@map("invoices")
+}
+
+model InvoiceItem {
+  id              String  @id @default(cuid())
+  invoiceId       String  @map("invoice_id")
+  productId       String  @map("product_id")
+  quantity        Decimal @db.Decimal(10, 4)
+  weight          Decimal? @db.Decimal(10, 4)
+  unitPrice       Decimal @map("unit_price") @db.Decimal(15, 2)
+  goldPrice       Decimal? @map("gold_price") @db.Decimal(15, 2)
+  manufacturingFee Decimal? @map("manufacturing_fee") @db.Decimal(15, 2)
+  lineTotal       Decimal @map("line_total") @db.Decimal(15, 2)
+  notes           String? @db.Text
+  
+  // Relations
+  invoice         Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  product         Product @relation(fields: [productId], references: [id])
+  
+  @@map("invoice_items")
+}
+
+model Payment {
+  id            String      @id @default(cuid())
+  invoiceId     String      @map("invoice_id")
+  type          PaymentType
+  amount        Decimal     @db.Decimal(15, 2)
+  currency      String      @default("IRR")
+  reference     String?     // Cheque number, card reference, etc.
+  status        PaymentStatus @default(PENDING)
+  dueDate       DateTime?   @map("due_date") @db.Date
+  clearedAt     DateTime?   @map("cleared_at")
+  notes         String?     @db.Text
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+  
+  // Relations
+  invoice       Invoice     @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  
+  @@map("payments")
+}
+
+model ChartOfAccounts {
+  id              String      @id @default(cuid())
+  accountCode     String      @unique @map("account_code")
+  accountName     String      @map("account_name")
+  accountType     AccountType @map("account_type")
+  parentAccountId String?     @map("parent_account_id")
+  currentBalance  Decimal     @default(0) @map("current_balance") @db.Decimal(15, 2)
+  isActive        Boolean     @default(true) @map("is_active")
+  currency        String      @default("IRR")
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+  
+  // Relations
+  parentAccount   ChartOfAccounts? @relation("AccountHierarchy", fields: [parentAccountId], references: [id])
+  childAccounts   ChartOfAccounts[] @relation("AccountHierarchy")
+  journalLineItems JournalLineItem[]
+  
+  @@map("chart_of_accounts")
+}
+
+model JournalEntry {
+  id            String            @id @default(cuid())
+  entryNumber   String            @unique @map("entry_number")
+  description   String
+  entryDate     DateTime          @map("entry_date") @db.Date
+  referenceType String?           @map("reference_type")
+  referenceId   String?           @map("reference_id")
+  totalDebit    Decimal           @map("total_debit") @db.Decimal(15, 2)
+  totalCredit   Decimal           @map("total_credit") @db.Decimal(15, 2)
+  status        JournalEntryStatus @default(DRAFT)
+  costCenter    String?           @map("cost_center")
+  createdBy     String            @map("created_by")
+  createdAt     DateTime          @default(now()) @map("created_at")
+  updatedAt     DateTime          @updatedAt @map("updated_at")
+  
+  // Relations
+  lineItems     JournalLineItem[]
+  
+  @@map("journal_entries")
+}
+
+model JournalLineItem {
+  id            String          @id @default(cuid())
+  journalEntryId String         @map("journal_entry_id")
+  accountId     String          @map("account_id")
+  debitAmount   Decimal         @default(0) @map("debit_amount") @db.Decimal(15, 2)
+  creditAmount  Decimal         @default(0) @map("credit_amount") @db.Decimal(15, 2)
+  description   String
+  costCenter    String?         @map("cost_center")
+  
+  // Relations
+  journalEntry  JournalEntry    @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  account       ChartOfAccounts @relation(fields: [accountId], references: [id])
+  
+  @@map("journal_line_items")
+}
+
+model BankAccount {
+  id            String    @id @default(cuid())
+  accountName   String    @map("account_name")
+  accountNumber String    @map("account_number")
+  bankName      String    @map("bank_name")
+  currency      String    @default("IRR")
+  currentBalance Decimal  @default(0) @map("current_balance") @db.Decimal(15, 2)
+  isActive      Boolean   @default(true) @map("is_active")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  
+  // Relations
+  statements    BankStatement[]
+  
+  @@map("bank_accounts")
+}
+
+model BankStatement {
+  id              String      @id @default(cuid())
+  bankAccountId   String      @map("bank_account_id")
+  transactionDate DateTime    @map("transaction_date") @db.Date
+  description     String
+  debitAmount     Decimal?    @map("debit_amount") @db.Decimal(15, 2)
+  creditAmount    Decimal?    @map("credit_amount") @db.Decimal(15, 2)
+  balance         Decimal     @db.Decimal(15, 2)
+  reference       String?
+  isReconciled    Boolean     @default(false) @map("is_reconciled")
+  reconciledWith  String?     @map("reconciled_with")
+  importedAt      DateTime    @default(now()) @map("imported_at")
+  
+  // Relations
+  bankAccount     BankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  
+  @@map("bank_statements")
+}
+
+model SystemSettings {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       String   @db.Text
+  description String?
+  updatedBy   String   @map("updated_by")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  
+  @@map("system_settings")
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  userId      String   @map("user_id")
+  action      String
+  entityType  String   @map("entity_type")
+  entityId    String?  @map("entity_id")
+  oldValues   String?  @map("old_values") @db.Text // JSON
+  newValues   String?  @map("new_values") @db.Text // JSON
+  ipAddress   String?  @map("ip_address")
+  userAgent   String?  @map("user_agent")
+  createdAt   DateTime @default(now()) @map("created_at")
+  
+  @@map("audit_logs")
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+enum TenantStatus {
+  TRIAL
+  ACTIVE
+  SUSPENDED
+  CANCELLED
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  TENANT_ADMIN
+  EMPLOYEE
+}
+
+enum LedgerType {
+  DEBIT
+  CREDIT
+}
+
+enum ProductCategory {
+  RAW_GOLD
+  FINISHED_JEWELRY
+  COINS
+  STONES
+}
+
+enum StockMovementType {
+  IN
+  OUT
+  ADJUSTMENT
+}
+
+enum InvoiceType {
+  SALE
+  PURCHASE
+  TRADE
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PAID
+  CANCELLED
+  OVERDUE
+}
+
+enum PaymentType {
+  CASH
+  CARD
+  CHEQUE
+  CREDIT
+  BANK_TRANSFER
+}
+
+enum PaymentStatus {
+  PENDING
+  CLEARED
+  BOUNCED
+  CANCELLED
+}
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  EXPENSE
+}
+
+enum JournalEntryStatus {
+  DRAFT
+  POSTED
+  LOCKED
+}
