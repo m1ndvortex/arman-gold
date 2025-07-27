@@ -1,0 +1,58 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Persian/RTL specific styles */
+@layer base {
+  html {
+    direction: rtl;
+  }
+  
+  body {
+    font-family: 'Tahoma', 'Arial', sans-serif;
+    direction: rtl;
+  }
+  
+  /* Persian number styles */
+  .persian-numbers {
+    font-feature-settings: 'lnum' 1;
+  }
+  
+  /* RTL form styles */
+  input, textarea, select {
+    text-align: right;
+  }
+  
+  input[type="number"] {
+    text-align: left;
+  }
+}
+
+@layer components {
+  /* Custom RTL button styles */
+  .btn-primary {
+    @apply bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-md transition-colors;
+  }
+  
+  .btn-secondary {
+    @apply bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium py-2 px-4 rounded-md transition-colors;
+  }
+  
+  /* RTL card styles */
+  .card {
+    @apply bg-white rounded-lg shadow-md p-6;
+  }
+  
+  /* RTL form styles */
+  .form-group {
+    @apply mb-4;
+  }
+  
+  .form-label {
+    @apply block text-sm font-medium text-gray-700 mb-2;
+  }
+  
+  .form-input {
+    @apply w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent;
+  }
+}
