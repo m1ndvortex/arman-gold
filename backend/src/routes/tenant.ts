@@ -1,22 +1,23 @@
 import { Router, Request, Response } from 'express';
 import { tenantService } from '../services/tenant';
 import { authMiddleware, requireRole, optionalTenantMiddleware, tenantSwitchMiddleware } from '../middleware/tenant';
-import { body, param, query, validationResult } from 'express-validator';
+const { body, param, query, validationResult } = require('express-validator');
 
 const router = Router();
 
 /**
  * Validation middleware
  */
-const handleValidationErrors = (req: Request, res: Response, next: any) => {
+const handleValidationErrors = (req: Request, res: Response, next: any): void => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
-    return res.status(400).json({
+    res.status(400).json({
       error: 'VALIDATION_ERROR',
       message: 'Invalid input data',
       details: errors.array(),
       code: 'VALIDATION_ERROR'
     });
+    return;
   }
   next();
 };
@@ -37,7 +38,7 @@ router.post('/',
   optionalTenantMiddleware,
   authMiddleware,
   requireRole(['SUPER_ADMIN']),
-  async (req: Request, res: Response) => {
+  async (req: Request, res: Response): Promise<void> => {
     try {
       const tenant = await tenantService.createTenant({
         name: req.body.name,
@@ -75,25 +76,27 @@ router.get('/:identifier',
   optionalTenantMiddleware,
   authMiddleware,
   requireRole(['SUPER_ADMIN', 'TENANT_ADMIN']),
-  async (req: Request, res: Response) => {
+  async (req: Request, res: Response): Promise<void> => {
     try {
       const tenant = await tenantService.getTenant(req.params.identifier);
 
       if (!tenant) {
-        return res.status(404).json({
+        res.status(404).json({
           error: 'TENANT_NOT_FOUND',
           message: 'Tenant not found',
           code: 'TENANT_NOT_FOUND'
         });
+        return;
       }
 
       // Non-super admins can only view their own tenant
       if (req.userRole !== 'SUPER_ADMIN' && req.tenantId !== tenant.id) {
-        return res.status(403).json({
+        res.status(403).json({
           error: 'ACCESS_DENIED',
           message: 'Access denied to tenant information',
           code: 'ACCESS_DENIED'
         });
+        return;
       }
 
       res.json({
@@ -126,7 +129,7 @@ router.get('/',
   optionalTenantMiddleware,
   authMiddleware,
   requireRole(['SUPER_ADMIN']),
-  async (req: Request, res: Response) => {
+  async (req: Request, res: Response): Promise<void> => {
     try {
       const filters = {
         status: req.query.status as string,
@@ -171,7 +174,7 @@ router.put('/:tenantId',
   optionalTenantMiddleware,
   authMiddleware,
   requireRole(['SUPER_ADMIN']),
-  async (req: Request, res: Response) => {
+  async (req: Request, res: Response): Promise<void> => {
     try {
       const updates: any = {};
       if (req.body.name) updates.name = req.body.name;
@@ -204,7 +207,7 @@ router.post('/:identifier/validate',
     param('identifier').notEmpty().withMessage('Tenant identifier is required')
   ],
   handleValidationErrors,
-  async (req: Request, res: Response) => {
+  async (req: Request, res: Response): Promise<void> => {
     try {
       const validation = await tenantService.validateTenant(req.params.identifier);
 
@@ -238,16 +241,17 @@ router.post('/:tenantId/switch',
   handleValidationErrors,
   authMiddleware,
   tenantSwitchMiddleware,
-  async (req: Request, res: Response) => {
+  async (req: Request, res: Response): Promise<void> => {
     try {
       const switchResult = await tenantService.switchTenantContext(req.userId!, req.params.tenantId);
 
       if (!switchResult.success) {
-        return res.status(403).json({
+        res.status(403).json({
           error: 'TENANT_SWITCH_FAILED',
           message: switchResult.error || 'Failed to switch tenant context',
           code: 'TENANT_SWITCH_FAILED'
         });
+        return;
       }
 
       res.json({
@@ -282,7 +286,7 @@ router.post('/:tenantId1/test-isolation/:tenantId2',
   optionalTenantMiddleware,
   authMiddleware,
   requireRole(['SUPER_ADMIN']),
-  async (req: Request, res: Response) => {
+  async (req: Request, res: Response): Promise<void> => {
     try {
       const isolationTest = await tenantService.testTenantIsolation(
         req.params.tenantId1,
@@ -320,15 +324,16 @@ router.get('/:tenantId/health',
   optionalTenantMiddleware,
   authMiddleware,
   requireRole(['SUPER_ADMIN', 'TENANT_ADMIN']),
-  async (req: Request, res: Response) => {
+  async (req: Request, res: Response): Promise<void> => {
     try {
       // Non-super admins can only check their own tenant health
       if (req.userRole !== 'SUPER_ADMIN' && req.tenantId !== req.params.tenantId) {
-        return res.status(403).json({
+        res.status(403).json({
           error: 'ACCESS_DENIED',
           message: 'Access denied to tenant health information',
           code: 'ACCESS_DENIED'
         });
+        return;
       }
 
       const health = await tenantService.getTenantHealth(req.params.tenantId);
@@ -362,7 +367,7 @@ router.delete('/:tenantId',
   optionalTenantMiddleware,
   authMiddleware,
   requireRole(['SUPER_ADMIN']),
-  async (req: Request, res: Response) => {
+  async (req: Request, res: Response): Promise<void> => {
     try {
       await tenantService.deleteTenant(req.params.tenantId, req.body.confirmation);
 
