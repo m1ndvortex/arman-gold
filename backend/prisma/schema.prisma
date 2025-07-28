@@ -53,7 +53,7 @@ model TenantUser {
 model UserSession {
   id           String   @id @default(cuid())
   userId       String   @map("user_id")
-  sessionToken String   @unique @map("session_token")
+  sessionToken String   @unique @map("session_token") @db.VarChar(1000)
   deviceInfo   String?  @map("device_info")
   ipAddress    String?  @map("ip_address")
   expiresAt    DateTime @map("expires_at")

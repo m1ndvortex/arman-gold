@@ -1,37 +1,74 @@
-#!/usr/bin/env ts-node
-
-import redisManager from '../config/redis';
+import { spawn } from 'child_process';
 import { logger } from '../utils/logger';
 
 async function testServerStartup() {
-  console.log('🔄 Testing server startup components...');
+  console.log('🚀 Testing server startup...');
   
-  try {
-    // Test Redis connection
-    console.log('1. Testing Redis connection...');
-    await redisManager.connect();
-    console.log('✅ Redis connected successfully');
-    
-    const health = await redisManager.healthCheck();
-    console.log(`✅ Redis health check: ${health.status} (latency: ${health.latency}ms)`);
-    
-    // Test logger
-    console.log('2. Testing logger...');
-    logger.info('Test log message');
-    console.log('✅ Logger working correctly');
-    
-    // Test graceful shutdown
-    console.log('3. Testing graceful shutdown...');
-    await redisManager.disconnect();
-    console.log('✅ Redis disconnected gracefully');
-    
-    console.log('\n🎉 All server startup components working correctly!');
-    console.log('✅ Server should start successfully with Redis integration');
-    
-  } catch (error) {
-    console.error('❌ Server startup test failed:', error);
-    process.exit(1);
-  }
+  return new Promise((resolve, reject) => {
+    const server = spawn('npm', ['run', 'dev'], {
+      stdio: 'pipe',
+      shell: true,
+      env: { ...process.env, PORT: '3001' } // Use different port
+    });
+
+    let output = '';
+    let hasStarted = false;
+
+    server.stdout.on('data', (data) => {
+      const text = data.toString();
+      output += text;
+      console.log(text);
+      
+      if (text.includes('Server running on port') || text.includes('🚀 Server running')) {
+        hasStarted = true;
+        console.log('✅ Server started successfully!');
+        server.kill();
+        resolve(true);
+      }
+    });
+
+    server.stderr.on('data', (data) => {
+      const text = data.toString();
+      output += text;
+      console.error(text);
+      
+      if (text.includes('Error') || text.includes('Failed')) {
+        console.log('❌ Server startup failed!');
+        server.kill();
+        reject(new Error(text));
+      }
+    });
+
+    server.on('close', (code) => {
+      if (!hasStarted && code !== 0) {
+        console.log('❌ Server failed to start');
+        reject(new Error(`Server exited with code ${code}`));
+      } else if (hasStarted) {
+        resolve(true);
+      }
+    });
+
+    // Timeout after 15 seconds
+    setTimeout(() => {
+      if (!hasStarted) {
+        console.log('❌ Server startup timeout');
+        server.kill();
+        reject(new Error('Server startup timeout'));
+      }
+    }, 15000);
+  });
 }
 
-testServerStartup();
+if (require.main === module) {
+  testServerStartup()
+    .then(() => {
+      console.log('🎉 Server startup test completed successfully!');
+      process.exit(0);
+    })
+    .catch((error) => {
+      console.error('❌ Server startup test failed:', error);
+      process.exit(1);
+    });
+}
+
+export default testServerStartup;

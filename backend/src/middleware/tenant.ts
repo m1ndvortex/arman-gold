@@ -89,30 +89,33 @@ export async function extractTenantContext(req: Request): Promise<TenantContext 
 /**
  * Middleware to extract and validate tenant context
  */
-export const tenantMiddleware = async (req: Request, res: Response, next: NextFunction) => {
+export const tenantMiddleware = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const tenantContext = await extractTenantContext(req);
 
     if (!tenantContext) {
-      return res.status(400).json({
+      res.status(400).json({
         error: 'TENANT_REQUIRED',
         message: 'Tenant context is required. Please provide tenant information via subdomain, X-Tenant-ID header, or JWT token.'
       });
+      return;
     }
 
     // Check tenant status
     if (tenantContext.status === 'SUSPENDED') {
-      return res.status(403).json({
+      res.status(403).json({
         error: 'TENANT_SUSPENDED',
         message: 'Tenant account is suspended. Please contact support.'
       });
+      return;
     }
 
     if (tenantContext.status === 'CANCELLED') {
-      return res.status(403).json({
+      res.status(403).json({
         error: 'TENANT_CANCELLED',
         message: 'Tenant account is cancelled.'
       });
+      return;
     }
 
     // Get tenant database connection
@@ -135,15 +138,16 @@ export const tenantMiddleware = async (req: Request, res: Response, next: NextFu
 /**
  * Middleware to extract user context from JWT token
  */
-export const authMiddleware = async (req: Request, res: Response, next: NextFunction) => {
+export const authMiddleware = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const authHeader = req.get('Authorization');
     
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({
+      res.status(401).json({
         error: 'AUTH_REQUIRED',
         message: 'Authentication token is required'
       });
+      return;
     }
 
     const token = authHeader.substring(7);
@@ -156,10 +160,11 @@ export const authMiddleware = async (req: Request, res: Response, next: NextFunc
     });
 
     if (!user || !user.isActive) {
-      return res.status(401).json({
+      res.status(401).json({
         error: 'USER_INVALID',
         message: 'User account is invalid or inactive'
       });
+      return;
     }
 
     // Add user context to request
@@ -174,19 +179,21 @@ export const authMiddleware = async (req: Request, res: Response, next: NextFunc
 
     // Verify user belongs to the requested tenant
     if (req.tenantId && req.tenantId !== user.tenantId) {
-      return res.status(403).json({
+      res.status(403).json({
         error: 'TENANT_MISMATCH',
         message: 'User does not belong to the requested tenant'
       });
+      return;
     }
 
     next();
   } catch (error) {
     if (error instanceof jwt.JsonWebTokenError) {
-      return res.status(401).json({
+      res.status(401).json({
         error: 'TOKEN_INVALID',
         message: 'Invalid authentication token'
       });
+      return;
     }
 
     console.error('Auth middleware error:', error);
@@ -201,19 +208,21 @@ export const authMiddleware = async (req: Request, res: Response, next: NextFunc
  * Role-based authorization middleware
  */
 export const requireRole = (allowedRoles: string[]) => {
-  return (req: Request, res: Response, next: NextFunction) => {
+  return (req: Request, res: Response, next: NextFunction): void => {
     if (!req.userRole) {
-      return res.status(401).json({
+      res.status(401).json({
         error: 'AUTH_REQUIRED',
         message: 'Authentication required'
       });
+      return;
     }
 
     if (!allowedRoles.includes(req.userRole)) {
-      return res.status(403).json({
+      res.status(403).json({
         error: 'INSUFFICIENT_PERMISSIONS',
         message: 'Insufficient permissions for this operation'
       });
+      return;
     }
 
     next();
