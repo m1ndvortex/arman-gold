@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { getTenantDb, platformDb } from '../database/connection';
+import { tenantService } from '../services/tenant';
 import jwt from 'jsonwebtoken';
 
 // Extend Express Request interface to include tenant context
@@ -10,6 +11,12 @@ declare global {
       tenantDb?: any; // PrismaClient type
       userId?: string;
       userRole?: string;
+      tenantInfo?: {
+        id: string;
+        name: string;
+        subdomain: string;
+        status: string;
+      };
     }
   }
 }
@@ -96,24 +103,24 @@ export const tenantMiddleware = async (req: Request, res: Response, next: NextFu
     if (!tenantContext) {
       res.status(400).json({
         error: 'TENANT_REQUIRED',
-        message: 'Tenant context is required. Please provide tenant information via subdomain, X-Tenant-ID header, or JWT token.'
+        message: 'Tenant context is required. Please provide tenant information via subdomain, X-Tenant-ID header, or JWT token.',
+        code: 'TENANT_REQUIRED'
       });
       return;
     }
 
-    // Check tenant status
-    if (tenantContext.status === 'SUSPENDED') {
-      res.status(403).json({
-        error: 'TENANT_SUSPENDED',
-        message: 'Tenant account is suspended. Please contact support.'
-      });
-      return;
-    }
-
-    if (tenantContext.status === 'CANCELLED') {
-      res.status(403).json({
-        error: 'TENANT_CANCELLED',
-        message: 'Tenant account is cancelled.'
+    // Validate tenant using the service
+    const validation = await tenantService.validateTenant(tenantContext.id);
+    
+    if (!validation.isValid) {
+      const statusCode = validation.error?.includes('suspended') ? 403 : 
+                        validation.error?.includes('cancelled') ? 403 : 
+                        validation.error?.includes('not found') ? 404 : 500;
+      
+      res.status(statusCode).json({
+        error: validation.error?.toUpperCase().replace(/\s+/g, '_') || 'TENANT_INVALID',
+        message: validation.error || 'Tenant validation failed',
+        code: validation.error?.toUpperCase().replace(/\s+/g, '_') || 'TENANT_INVALID'
       });
       return;
     }
@@ -124,13 +131,20 @@ export const tenantMiddleware = async (req: Request, res: Response, next: NextFu
     // Add tenant context to request
     req.tenantId = tenantContext.id;
     req.tenantDb = tenantDb;
+    req.tenantInfo = {
+      id: validation.tenant!.id,
+      name: validation.tenant!.name,
+      subdomain: validation.tenant!.subdomain,
+      status: validation.tenant!.status
+    };
 
     next();
   } catch (error) {
     console.error('Tenant middleware error:', error);
     res.status(500).json({
       error: 'TENANT_ERROR',
-      message: 'Failed to establish tenant context'
+      message: 'Failed to establish tenant context',
+      code: 'TENANT_ERROR'
     });
   }
 };
@@ -236,10 +250,20 @@ export const optionalTenantMiddleware = async (req: Request, res: Response, next
   try {
     const tenantContext = await extractTenantContext(req);
 
-    if (tenantContext && tenantContext.status === 'ACTIVE') {
-      const tenantDb = await getTenantDb(tenantContext.id);
-      req.tenantId = tenantContext.id;
-      req.tenantDb = tenantDb;
+    if (tenantContext && (tenantContext.status === 'ACTIVE' || tenantContext.status === 'TRIAL')) {
+      const validation = await tenantService.validateTenant(tenantContext.id);
+      
+      if (validation.isValid) {
+        const tenantDb = await getTenantDb(tenantContext.id);
+        req.tenantId = tenantContext.id;
+        req.tenantDb = tenantDb;
+        req.tenantInfo = {
+          id: validation.tenant!.id,
+          name: validation.tenant!.name,
+          subdomain: validation.tenant!.subdomain,
+          status: validation.tenant!.status
+        };
+      }
     }
 
     next();
@@ -247,5 +271,108 @@ export const optionalTenantMiddleware = async (req: Request, res: Response, next
     // Continue without tenant context
     console.warn('Optional tenant middleware warning:', error);
     next();
+  }
+};
+
+/**
+ * Middleware to handle tenant switching for authenticated users
+ */
+export const tenantSwitchMiddleware = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const targetTenantId = req.headers['x-switch-tenant'] as string;
+    
+    if (!targetTenantId) {
+      next();
+      return;
+    }
+
+    if (!req.userId) {
+      res.status(401).json({
+        error: 'AUTH_REQUIRED',
+        message: 'Authentication required for tenant switching',
+        code: 'AUTH_REQUIRED'
+      });
+      return;
+    }
+
+    // Attempt to switch tenant context
+    const switchResult = await tenantService.switchTenantContext(req.userId, targetTenantId);
+    
+    if (!switchResult.success) {
+      res.status(403).json({
+        error: 'TENANT_SWITCH_FAILED',
+        message: switchResult.error || 'Failed to switch tenant context',
+        code: 'TENANT_SWITCH_FAILED'
+      });
+      return;
+    }
+
+    // Update request context with new tenant
+    const tenantDb = await getTenantDb(targetTenantId);
+    const tenantInfo = await tenantService.getTenant(targetTenantId);
+    
+    req.tenantId = targetTenantId;
+    req.tenantDb = tenantDb;
+    req.tenantInfo = tenantInfo ? {
+      id: tenantInfo.id,
+      name: tenantInfo.name,
+      subdomain: tenantInfo.subdomain,
+      status: tenantInfo.status
+    } : undefined;
+
+    next();
+  } catch (error) {
+    console.error('Tenant switch middleware error:', error);
+    res.status(500).json({
+      error: 'TENANT_SWITCH_ERROR',
+      message: 'Failed to switch tenant context',
+      code: 'TENANT_SWITCH_ERROR'
+    });
+  }
+};
+
+/**
+ * Middleware to prevent cross-tenant data access
+ */
+export const tenantIsolationMiddleware = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    // Ensure tenant context is established
+    if (!req.tenantId || !req.tenantDb) {
+      res.status(400).json({
+        error: 'TENANT_CONTEXT_MISSING',
+        message: 'Tenant context is required for this operation',
+        code: 'TENANT_CONTEXT_MISSING'
+      });
+      return;
+    }
+
+    // Ensure user belongs to the current tenant
+    if (req.userId) {
+      const user = await platformDb.tenantUser.findFirst({
+        where: {
+          id: req.userId,
+          tenantId: req.tenantId,
+          isActive: true
+        }
+      });
+
+      if (!user) {
+        res.status(403).json({
+          error: 'TENANT_ACCESS_DENIED',
+          message: 'User does not have access to this tenant',
+          code: 'TENANT_ACCESS_DENIED'
+        });
+        return;
+      }
+    }
+
+    next();
+  } catch (error) {
+    console.error('Tenant isolation middleware error:', error);
+    res.status(500).json({
+      error: 'TENANT_ISOLATION_ERROR',
+      message: 'Failed to verify tenant isolation',
+      code: 'TENANT_ISOLATION_ERROR'
+    });
   }
 };

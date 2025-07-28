@@ -15,6 +15,7 @@ import {
   corsOptions 
 } from './middleware/security';
 import authRoutes from './routes/auth';
+import tenantRoutes from './routes/tenant';
 
 // Load environment variables
 dotenv.config();
@@ -72,6 +73,7 @@ app.get('/health', async (req, res) => {
 
 // API routes
 app.use('/api/v1/auth', authRoutes);
+app.use('/api/v1/tenants', tenantRoutes);
 
 // API status endpoint
 app.get('/api/v1/status', (req, res) => {
